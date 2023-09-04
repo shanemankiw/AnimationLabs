@@ -78,7 +78,7 @@ def main():
     # part1(viewer, bvh_file_path)
 
     # part2
-    # part2_one_pose(viewer, bvh_file_path)
+    part2_one_pose(viewer, bvh_file_path)
     # part2_animation(viewer, bvh_file_path)
 
     # part3
