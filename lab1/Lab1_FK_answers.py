@@ -18,7 +18,6 @@ def load_motion_data(bvh_file_path):
     return motion_data
 
 
-
 def part1_calculate_T_pose(bvh_file_path):
     """请填写以下内容
     输入： bvh 文件路径
@@ -30,9 +29,37 @@ def part1_calculate_T_pose(bvh_file_path):
     Tips:
         joint_name顺序应该和bvh一致
     """
-    joint_name = None
-    joint_parent = None
-    joint_offset = None
+
+    with open(bvh_file_path, 'r') as f:
+        lines = f.readlines()
+    
+    joint_name = []
+    joint_parent = []
+    joint_offset = []
+    stack = []
+    
+    for line in lines:
+        words = line.split()
+        
+        if words[0] in ["ROOT", "JOINT"]:
+            joint_name.append(words[1])
+            if stack:
+                joint_parent.append(joint_name.index(stack[-1]))
+            else:
+                joint_parent.append(-1)
+            stack.append(words[1])
+        
+        elif words[0] == "End":
+            stack.append("End Site")
+        
+        elif words[0] == "OFFSET":
+            offset = [float(v) for v in words[1:]]
+            joint_offset.append(offset)
+        
+        elif words[0] == "}":
+            stack.pop()
+    
+    joint_offset = np.array(joint_offset)
     return joint_name, joint_parent, joint_offset
 
 
