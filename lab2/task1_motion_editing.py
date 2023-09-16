@@ -135,8 +135,8 @@ def main():
     # 请自行取消需要的注释并更改测试setting_id
     # 请不要同时取消多个注释，否则前者会被后者覆盖
     
-    part1_translation_and_rotation(viewer, 0) # 数字代表不同的测试setting
-    # part2_interpolate(viewer, 1) # 数字代表不同期望的前进速度
+    # part1_translation_and_rotation(viewer, 0) # 数字代表不同的测试setting
+    # part2_interpolate(viewer, 0.5) # 数字代表不同期望的前进速度
     # part3_build_loop(viewer)
     # part4_concatenate(viewer, 0) # 数字代表不同的测试setting
     viewer.run()

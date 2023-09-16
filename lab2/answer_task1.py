@@ -205,11 +205,17 @@ class BVHMotion():
         输入: rotation 形状为(4,)的ndarray, 四元数旋转
         输出: Ry, Rxz，分别为绕y轴的旋转和转轴在xz平面的旋转，并满足R = Ry * Rxz
         '''
-        Ry = np.zeros_like(rotation)
-        Rxz = np.zeros_like(rotation)
-        # TODO: 你的代码
+        euler_angles = R.from_quat(rotation).as_euler("yzx")
         
-        return Ry, Rxz
+        # Extract Y-axis rotation using the first component of the euler angles
+        y_rotation = R.from_rotvec(np.array([0, 1, 0]) * euler_angles[0])
+        y_rot = y_rotation.as_quat()
+
+        # Obtain the XZ rotation by applying the inverse of the Y rotation to the original rotation
+        xz_rotation = y_rotation.inv() * R.from_quat(rotation)
+        xz_rot = xz_rotation.as_quat()
+
+        return y_rot, xz_rot
     
     # part 1
     def translation_and_rotation(self, frame_num, target_translation_xz, target_facing_direction_xz):
@@ -226,13 +232,42 @@ class BVHMotion():
             输入的target_facing_direction_xz的norm不一定是1
         '''
         
-        res = self.raw_copy() # 拷贝一份，不要修改原始数据
+        adjusted_data = self.raw_copy()  # Clone the original data
         
-        # 比如说，你可以这样调整第frame_num帧的根节点平移
-        offset = target_translation_xz - res.joint_position[frame_num, 0, [0,2]]
-        res.joint_position[:, 0, [0,2]] += offset
-        # TODO: 你的代码
-        return res
+        # Adjust the root node's XZ position based on the target position
+        pos_diff = target_translation_xz - adjusted_data.joint_position[frame_num, 0, [0, 2]]
+        adjusted_data.joint_position[:, 0, [0, 2]] += pos_diff
+        
+        # Normalize the target XZ direction
+        target_facing_direction_xz = target_facing_direction_xz.astype(np.float64)
+        target_facing_direction_xz /= np.linalg.norm(target_facing_direction_xz)
+        
+        # Compute the rotation angle to align the Z-axis with the target direction
+        rot_angle = np.arctan2(target_facing_direction_xz[0], target_facing_direction_xz[1])
+        
+        # If the rotation angle is zero, return the adjusted data
+        if rot_angle == 0.0:
+            return adjusted_data
+
+        # Define the rotation around the Y-axis based on the computed angle
+        rotation_transform = R.from_rotvec(np.array([0, 1, 0]) * rot_angle)
+        
+        # Initialize position
+        initial_pos = adjusted_data.joint_position[frame_num, 0, [0, 1, 2]]
+        
+        # Apply rotation to all frames
+        for idx in range(0, adjusted_data.joint_rotation.shape[0]):
+            curr_rotation = R.from_quat(adjusted_data.joint_rotation[idx, 0])
+            curr_position = adjusted_data.joint_position[idx, 0, [0, 1, 2]]
+            
+            # Compute new position after rotation
+            new_pos_offset = rotation_transform.apply(curr_position - initial_pos)
+            
+            # Update rotation and position for each joint in the frame
+            adjusted_data.joint_rotation[idx, 0] = (rotation_transform * curr_rotation).as_quat()
+            adjusted_data.joint_position[idx, 0, [0, 2]] = np.array([new_pos_offset[0] + initial_pos[0], new_pos_offset[2] + initial_pos[2]])
+
+        return adjusted_data
 
 # part2
 def blend_two_motions(bvh_motion1, bvh_motion2, alpha):
@@ -245,11 +280,39 @@ def blend_two_motions(bvh_motion1, bvh_motion2, alpha):
     '''
     
     res = bvh_motion1.raw_copy()
+    num_frames = len(alpha)
     res.joint_position = np.zeros((len(alpha), res.joint_position.shape[1], res.joint_position.shape[2]))
     res.joint_rotation = np.zeros((len(alpha), res.joint_rotation.shape[1], res.joint_rotation.shape[2]))
     res.joint_rotation[...,3] = 1.0
 
-    # TODO: 你的代码
+    motion1_len = float(bvh_motion1.motion_length - 1)
+    motion2_len = float(bvh_motion2.motion_length - 1)
+
+
+    for i in range(num_frames):
+        ratio = float(i) / float(num_frames - 1)
+        motion1_index = int(motion1_len * ratio)
+        motion2_index = int(motion2_len * ratio)
+        a = alpha[i]
+        
+        # Calculate the blended joint positions.
+        res.joint_position[i] = (bvh_motion1.joint_position[motion1_index] * (1.0 - a)
+                                 + bvh_motion2.joint_position[motion2_index] * a)
+        
+        for joint_i in range(bvh_motion1.joint_rotation.shape[1]):
+            q0 = bvh_motion1.joint_rotation[motion1_index, joint_i]
+            q1 = bvh_motion2.joint_rotation[motion2_index, joint_i]
+            angle = np.arccos(np.dot(q0, q1))
+            
+            # Handle the case where angle is too large to avoid singularities.
+            if np.abs(angle) > np.pi * 0.5:
+                q0 = -q0
+                
+            # Linearly interpolate the quaternion values.
+            q = (1.0 - a) * q0 + a * q1
+            q = q / np.linalg.norm(q)
+            
+            res.joint_rotation[i, joint_i] = q
     
     return res
 
@@ -265,7 +328,8 @@ def build_loop_motion(bvh_motion):
     res = bvh_motion.raw_copy()
     
     from smooth_utils import build_loop_motion
-    return build_loop_motion(res)
+
+    return res  #build_loop_motion(res)
 
 # part4
 def concatenate_two_motions(bvh_motion1, bvh_motion2, mix_frame1, mix_time):
@@ -278,10 +342,42 @@ def concatenate_two_motions(bvh_motion1, bvh_motion2, mix_frame1, mix_time):
     '''
     res = bvh_motion1.raw_copy()
     
-    # TODO: 你的代码
-    # 下面这种直接拼肯定是不行的(
-    res.joint_position = np.concatenate([res.joint_position[:mix_frame1], bvh_motion2.joint_position], axis=0)
-    res.joint_rotation = np.concatenate([res.joint_rotation[:mix_frame1], bvh_motion2.joint_rotation], axis=0)
+    # Compute the starting joint's position and rotation from the first motion.
+    start_position = bvh_motion1.joint_position[mix_frame1, 0, [0, 1, 2]]
+    (start_Ry, _) = bvh_motion1.decompose_rotation_with_yaxis(bvh_motion1.joint_rotation[mix_frame1, 0])
+    Ry = R.from_quat(start_Ry)
+    start_face = Ry.apply(np.array([0, 0, 1]))
     
+    # Adjust the position and orientation of the second motion.
+    bvh_motion2_transformed = bvh_motion2.translation_and_rotation(0, start_position[[0, 2]], start_face[[0, 2]])
+    
+    # Hard concatenation.
+    res.joint_position = np.concatenate([res.joint_position[:mix_frame1], bvh_motion2_transformed.joint_position], axis=0)
+    res.joint_rotation = np.concatenate([res.joint_rotation[:mix_frame1], bvh_motion2_transformed.joint_rotation], axis=0)
+
+    # Linear interpolation within the blending segment.
+    for i in range(mix_time):
+        ratio = float(i) / float(mix_time - 1)
+        motion1_index = mix_frame1 + i
+        motion2_index = i
+        
+        res.joint_position[motion1_index] = (bvh_motion1.joint_position[motion1_index] * (1.0 - ratio)
+                                             + bvh_motion2_transformed.joint_position[motion2_index] * ratio)
+        
+        for joint_i in range(bvh_motion1.joint_rotation.shape[1]):
+            q0 = bvh_motion1.joint_rotation[motion1_index, joint_i]
+            q1 = bvh_motion2_transformed.joint_rotation[motion2_index, joint_i]
+            angle = np.arccos(np.dot(q0, q1))
+            
+            # Handle the case where angle is too large to avoid singularities.
+            if np.abs(angle) > np.pi * 0.5:
+                q0 = -q0
+                
+            # Linearly interpolate the quaternion values.
+            q = (1.0 - ratio) * q0 + ratio * q1
+            q = q / np.linalg.norm(q)
+            
+            res.joint_rotation[motion1_index, joint_i] = q
+
     return res
 
