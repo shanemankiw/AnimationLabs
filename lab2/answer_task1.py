@@ -84,6 +84,9 @@ class BVHMotion():
         self.joint_name = []
         self.joint_channel = []
         self.joint_parent = []
+        self.hip_index = 0
+        self.spine_index = 0
+        self.frame_time = 0.016667 # 每帧动作的时间
         
         # 一些local数据, 对应bvh里的channel, XYZposition和 XYZrotation
         #! 这里我们把没有XYZ position的joint的position设置为offset, 从而进行统一
@@ -101,6 +104,8 @@ class BVHMotion():
         '''
         self.joint_name, self.joint_parent, self.joint_channel, joint_offset = \
             load_meta_data(bvh_file_path)
+        self.hip_index = 0
+        self.spine_index = self.joint_name.index("lowerback_torso") # 上脊柱关节
         
         motion_data = load_motion_data(bvh_file_path)
 
@@ -125,6 +130,15 @@ class BVHMotion():
         
         return
 
+    def get_simulation_bone(self, joint_translation: np.ndarray, joint_orientation: np.ndarray):
+        '''
+        基于[代码与数据驱动的位移](https://theorangeduck.com/page/code-vs-data-driven-displacement)构造的某一帧下当前骨架对应的仿真骨骼信息
+        '''
+        projected_translation = np.array([joint_translation[self.spine_index, 0], 0.01, joint_translation[self.spine_index, 2]])
+        Ry, _ = self.decompose_rotation_with_yaxis(joint_orientation[self.hip_index])
+
+        return projected_translation, Ry
+    
     def batch_forward_kinematics(self, joint_position = None, joint_rotation = None):
         '''
         利用自身的metadata进行批量前向运动学
@@ -139,6 +153,8 @@ class BVHMotion():
         joint_translation = np.zeros_like(joint_position)
         joint_orientation = np.zeros_like(joint_rotation)
         joint_orientation[:,:,3] = 1.0 # 四元数的w分量默认为1
+        #simulation_translation = np.zeros(shape=(joint_position.shape[0], 3))
+        #simulation_orientation = np.zeros(shape=(joint_position.shape[0], 4))
         
         # 一个小hack是root joint的parent是-1, 对应最后一个关节
         # 计算根节点时最后一个关节还未被计算，刚好是0偏移和单位朝向
@@ -149,7 +165,13 @@ class BVHMotion():
             joint_translation[:, i, :] = joint_translation[:, pi, :] + \
                 parent_orientation.apply(joint_position[:, i, :])
             joint_orientation[:, i, :] = (parent_orientation * R.from_quat(joint_rotation[:, i, :])).as_quat()
-        return joint_translation, joint_orientation
+        
+        """for i in range(len(simulation_translation)):
+            translation, orientation = self.get_simulation_bone(joint_translation[i], joint_orientation[i])
+            simulation_translation[i] = translation
+            simulation_orientation[i] = orientation"""
+
+        return joint_translation, joint_orientation#, simulation_translation, simulation_orientation
     
     
     def adjust_joint_name(self, target_joint_name):
